@@ -9,6 +9,10 @@ import tkinter
 import math
 import time
 import numpy as np
+from typing import Union
+from roktracker.kingdom.ui_settings import KingdomUI  # ou ajuste o import se necessário
+
+ImageType = Union[np.ndarray, None]
 
 import pyperclip
 
@@ -27,8 +31,8 @@ from roktracker.alliance.additional_data import AdditionalData as AdditionalData
 from roktracker.alliance.governor_data import GovernorData as GovernorDataSeed
 from roktracker.alliance.governor_image_group import GovImageGroup as GovImageGroupSeed
 from roktracker.alliance.pandas_handler import PandasHandler as PandasHandlerSeed
-from roktracker.kingdom.ui_settings import KingdomUI
 from roktracker.utils.output_formats import OutputFormats
+from roktracker.utils.ocr import cropToRegion, preprocessImage, save_pil_image
 from tesserocr import PyTessBaseAPI, PSM, OEM  # type: ignore
 from typing import Callable, List
 
@@ -200,21 +204,50 @@ class KingdomScanner:
             case _:
                 return False
 
-    def process_ranking_screen(self, image: MatLike, position: int) -> GovImageGroupSeed:
-        if position < 6:
-            region = KingdomUI.score_normal[position]
-        else:
-            region = KingdomUI.score_last[position - 6]  # ajuste baseado nos últimos slots
+    def save_visible_score_blocks(self, img_path: Path, current_player: int, use_last: bool = False):
+        image = load_cv2_img(img_path / "currentState.png", cv2.IMREAD_UNCHANGED)
+        pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        
+        score_regions = KingdomUI.score_last if use_last else KingdomUI.score_normal
 
-        gov_score_im = cropToRegion(image, region)
-        gov_score_im_bw = preprocessImage(
-            gov_score_im, 3, KingdomUI.misc.threshold, 12, KingdomUI.misc.invert
+        for i, (x, y, w, h) in enumerate(score_regions):
+            crop = pil_image.crop((x, y, x + w, y + h))
+            filename = img_path / f"score_debug_{current_player + i + 1}.png"
+            crop.save(filename)
+            print(f"✔️ Score slot {i+1} salvo: {filename.name}")
+
+
+    def _read_governor_score(self, image: MatLike, tesseract_path: Path) -> str:
+        """
+        Lê o score (nível da prefeitura) do primeiro jogador da tela de ranking.
+        Usa coordenadas fixas pois o scroll é gerido fora desta função.
+        """
+        
+        # Coordenadas ajustadas do primeiro slot
+        score_region = (1087, 280, 250, 38)  # x, y, w, h
+
+        # Recorte da região
+        cropped = cropToRegion(image, score_region)
+
+        # Pré-processamento
+        preprocessed = preprocessImage(
+            cropped,
+            scale_factor=3,
+            threshold=120,
+            border_size=10,
+            invert=True
         )
 
-        # debug opcional
-        write_cv2_img(gov_score_im_bw, self.img_path / f"debug_score_{position}.png", "png")
+        # DEBUG opcional: apenas um arquivo salvo
+        debug_path = self.img_path / "score_debug_1.png"
+        save_pil_image(preprocessed, debug_path)
+        self.output_handler("✔️ Score slot 1 salvo: score_debug_1.png")
 
-        return GovImageGroupSeed(gov_score_im_bw)
+        # OCR
+        with PyTessBaseAPI(path=str(tesseract_path), psm=PSM.SINGLE_WORD, oem=OEM.LSTM_ONLY) as api:
+            score = ocr_number(api, preprocessed)
+
+        return score
 
 
     def scan_governor(
@@ -225,26 +258,20 @@ class KingdomScanner:
         start_time = time.time()
         governor_data = GovernorData()
 
-        # Screenshot da tela de ranking
         self.adb_client.secure_adb_screencap().save(self.img_path / "currentState.png")
         image = load_cv2_img(self.img_path / "currentState.png", cv2.IMREAD_UNCHANGED)
 
-        gov = self.process_ranking_screen(image, current_player)
+        if self.scan_options["Score"]:
+            governor_data.score = self._read_governor_score(image, self.tesseract_path)
 
-        with PyTessBaseAPI(path=str(self.tesseract_path), psm=PSM.SINGLE_WORD) as api:
-            if self.scan_options["Score"]:
-                api.SetVariable("tessedit_char_whitelist", "0123456789")
-                gov_score = ocr_number(api, gov.score_img)
-
-                governor_data.score = gov_score
-                try:
-                    score_value = int(governor_data.score)
-                    if score_value < 25:
-                        self.output_handler(f"Skipping governor {current_player+1} due to low score ({score_value})")
-                        self.scan_times.append(time.time() - start_time)
-                        return governor_data 
-                except:
-                    self.output_handler(f"Score could not be parsed for governor {current_player+1}: '{governor_data.score}'")
+            try:
+                score_value = int(governor_data.score)
+                if score_value < 25:
+                    self.output_handler(f"Skipping governor {current_player+1} due to low score ({score_value})")
+                    self.scan_times.append(time.time() - start_time)
+                    return governor_data 
+            except Exception:
+                self.output_handler(f"Score could not be parsed for governor {current_player+1}: '{governor_data.score}'")
 
         self.state_callback("Opening governor")
         # Open governor
