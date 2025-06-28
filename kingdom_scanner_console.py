@@ -66,6 +66,7 @@ def main():
     scan_options = {
         "ID": False,
         "Name": False,
+        "Score": False,
         "Power": False,
         "Killpoints": False,
         "Alliance": False,
@@ -150,7 +151,7 @@ def main():
                     shortcut_key="f",
                 ),
                 questionary.Choice(
-                    "Seed (ID, Name, Power, KP, Alliance)",
+                    "Seed (ID, Name, Score, Power)",
                     value="seed",
                     checked=False,
                     shortcut_key="s",
@@ -169,6 +170,7 @@ def main():
                 scan_options = {
                     "ID": True,
                     "Name": True,
+                    "Score": False,
                     "Power": True,
                     "Killpoints": True,
                     "Alliance": True,
@@ -187,9 +189,10 @@ def main():
                 scan_options = {
                     "ID": True,
                     "Name": True,
+                    "Score": True,
                     "Power": True,
-                    "Killpoints": True,
-                    "Alliance": True,
+                    "Killpoints": False,
+                    "Alliance": False,
                     "T1 Kills": False,
                     "T2 Kills": False,
                     "T3 Kills": False,
@@ -211,6 +214,10 @@ def main():
                         ),
                         questionary.Choice(
                             "Name",
+                            checked=False,
+                        ),
+                        questionary.Choice(
+                            "Score",
                             checked=False,
                         ),
                         questionary.Choice(
