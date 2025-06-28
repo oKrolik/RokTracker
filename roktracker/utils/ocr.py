@@ -1,6 +1,7 @@
 import cv2
 import re
 import tesserocr
+import numpy as np
 
 from PIL import Image
 from cv2.typing import MatLike
@@ -69,3 +70,8 @@ def preprocess_and_ocr_number(
 
 def get_supported_langs(path: str) -> str:
     return str(tesserocr.get_languages(path))  # type: ignore
+
+def save_pil_image(img, path):
+    if isinstance(img, np.ndarray):
+        img = Image.fromarray(img)
+    img.save(path)
